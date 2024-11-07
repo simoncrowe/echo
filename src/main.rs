@@ -9,9 +9,9 @@ use rustfft::FftPlanner;
 use std::f32::consts::TAU;
 
 const IN_TRIGGER_ADB: f32 = 34.0;
-const PLAYBACK_MAX_ADB: f32 = 30.0;
 const MIN_CLIP_SECS: f32 = 0.25;
-
+const PLAYBACK_MAX_ADB: f32 = 30.0;
+const PLAYBACK_DAMP: f32 = 3.0;
 const SIN_OSC_FREQ: f32 = 20.0;
 const SIN_OSC_AMP: f32 = 0.04;
 
@@ -72,12 +72,13 @@ fn main() -> anyhow::Result<()> {
     let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
         let mut output_fell_behind = false;
 
-        let mut samples: Vec<f32> = vec![];
+        let mut samples: Vec<f32> = vec![0.0; data.len()];
         samples.clone_from_slice(data);
         clipper.ingest(Chunk::new(samples, input_sample_rate));
 
         match clipper.next() {
             Some(samples) => {
+                println!("Got samples from clipper");
                 for sample in samples {
                     if producer.try_push(sample).is_err() {
                         output_fell_behind = true;
@@ -85,6 +86,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             None => {
+                println!("Falling back on sine samples");
                 for i in 0..data.len() {
                     if producer.try_push(sin_osc.next().unwrap()).is_err() {
                         output_fell_behind = true;
@@ -101,10 +103,15 @@ fn main() -> anyhow::Result<()> {
         let mut input_fell_behind = false;
         let decibels = calculate_dba(&data, input_sample_rate);
         println!("Max decibels for chunk: {}", decibels);
+        
+        let mut damp = PLAYBACK_DAMP;
+        if decibels > PLAYBACK_MAX_ADB {
+            damp = decibels / PLAYBACK_MAX_ADB 
+        }
 
         for sample in data {
             *sample = match consumer.try_pop() {
-                Some(s) => s,
+                Some(s) => s / damp,
                 None => {
                     input_fell_behind = true;
                     0.0
@@ -116,7 +123,6 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Build streams.
     println!(
         "Attempting to build both streams with f32 samples and `{:?}`.",
         config
@@ -262,21 +268,24 @@ impl LoudClipCollector {
         };
     }
 
-    pub fn ingest(mut self, chunk: Chunk) {
-        self.buffer.insert(0, chunk);
-        let avg_loudness: f32 =
-            self.buffer.iter().map(|chunk| chunk.decibels).sum::<f32>() / self.buffer.len() as f32;
+    pub fn ingest(&mut self, chunk: Chunk) {
+        if !self.playback {
+            self.buffer.insert(0, chunk);
+        } 
+        let total_loudness: f32 = self.buffer.iter().map(|chunk| chunk.decibels).sum();
+        let avg_loudness: f32 = total_loudness / self.buffer.len() as f32;
 
-        if avg_loudness < self.loud_gate_adb {
-            let duration = self.sample_rate
-                / self
+        if avg_loudness < (self.loud_gate_adb / 2.0) {
+            let sample_count = self
                     .buffer
                     .iter()
                     .map(|chunk| chunk.samples.len() as f32)
                     .sum::<f32>();
+            let duration = sample_count / self.sample_rate;
             if duration >= self.min_clip_secs {
                 self.playback = true;
             } else {
+                self.playback = false;
                 self.buffer.clear();
             }
         }
