@@ -1,0 +1,11 @@
+[package]
+name = "echo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.93"
+cpal = "0.15.3"
+queues = "1.1.0"
+ringbuf = "0.4.7"
+rustfft = "6.2.0"
