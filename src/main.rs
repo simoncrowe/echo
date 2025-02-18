@@ -10,9 +10,9 @@ use rustfft::FftPlanner;
 use std::f32::consts::TAU;
 
 #[derive(Parser)]
-#[command(name = "Parrot Fucker")]
+#[command(name = "Echo")]
 #[command(version = "0.1.0")]
-#[command(about = "Echoes loud fucking audio", long_about = None)]
+#[command(about = "Echoes loud audio", long_about = None)]
 struct Cli {
     #[arg(short, long, default_value_t = 34.0)]
     trigger_decibels: f32,
